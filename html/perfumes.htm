@@ -60,9 +60,9 @@
 
 
 					if (metric2 == '%' || metric2 == 'No') {
-						var file_name = type + metric1 + ".json"
+						var file_name = type + '_' + metric1 + ".json"
 					} else {
-						var file_name = type + metric1 + "_and_" + metric2 + ".json"
+						var file_name = type + '_' + metric1 + "_and_" + metric2 + ".json"
 					}
 					console.log(file_name)
 					var graphTitle = ""
@@ -111,24 +111,21 @@
 					}
 
 					var products_data = ""
-					var data_products = ""
 					$.ajax({
 					     async: false,
 					     type: 'GET',
 					     url: file_name,
 					     success: function(data) {
-					          data_products = data
+					          products_data = data
 					     }
 					});
-					console.log(products_data)
-					
 
-					// products_data = products_data.toString()
-					
-					// products_data = products_data.replace(/'/g,'"');
-					// products_data = products_data.replace(/\\xc8/g,'È');
-					// products_data = products_data.replace(/\\xc9/g,'É');
-					// products_data = JSON.parse(products_data)
+					products_data = products_data.toString()
+					products_data = products_data.replace(/'/g,'"');
+					products_data = products_data.replace(/\\xc8/g,'È');
+					products_data = products_data.replace(/\\xc9/g,'É');
+					products_data = JSON.parse(products_data)
+					console.log(products_data)
 					var colors = [
 						"#FF007F", //rose
 						"#663300", //marron
