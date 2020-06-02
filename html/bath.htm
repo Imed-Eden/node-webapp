@@ -80,9 +80,12 @@
 						case 'mark':
 							x_axis_title = "Mark"
 							break
+						case 'popularity':
+							metric1 = 'wilson_score'
+							x_axis_title = 'Popularity'
 						default:
+							metric1 = ""
 					}
-
 					switch (metric2) {
 						case 'likes':
 							metric2 = 'number_likes';
@@ -98,6 +101,9 @@
 						case 'mark':
 							y_axis_title = "Mark"
 							break
+						case 'popularity':
+							metric1 = 'wilson_score'
+							x_axis_title = 'Popularity'
 						default:
 							metric2 = ""
 					}
