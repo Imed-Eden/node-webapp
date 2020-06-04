@@ -1,8 +1,12 @@
 # -*- coding: utf-8 -*-
 
-import sys, getopt
 import json
 import requests
+import os
+import shutil
+import ast
+import re
+from azure.storage.file.fileservice import FileService
 
 
 # Declare variables to connect to the Cognitive Search endpoint
@@ -11,43 +15,29 @@ api_version = '?api-version=2019-05-06'
 headers = {'Content-Type': 'application/json',
         'api-key': 'A54DE9E994C977D6C43EA04DFE1BD845' }
 
+# Declare variables to connect to the Azure Blob Storage endpoint
+AZURE_STORAGE_CONNECTION_STRING="DefaultEndpointsProtocol=https;AccountName=puppeteerscrapingresults;AccountKey=QsaFrqTErlHV6+tnoy1OhfYWMEshAUUnPq/lgY8t/oe6rCHxTuA7IgtlrbQRsSS4Il7olLAR0PQ+NxaIYqfgjw==;EndpointSuffix=core.windows.net"
 
-def fetch_parameters():
-    brand = ""
-    scoringProfile = ""
-    gender = ""
-    typee = ""
-    sort = ""
-    try:
-        opts, args = getopt.getopt(sys.argv[1:],"h:bsgtr",["help=","brand=","scoringProfile=","gender=","type=","sort="])
-    except getopt.GetoptError:
-        print 'Options not recognized'
-        sys.exit(2)
-    for o, a in opts:
-        if o in ("-h", "--help"):
-            print("Help")
-        elif o in ("-b", "--brand"):
-            brand = a
-        elif o in ("-s", "--scoringProfile"):
-            scoringProfile = a
-            # sys.exit()
-        elif o in ("-g", "--gender"):
-            gender = a
-        elif o in ("-t", "--type"):
-            typee = a
-        elif o in ("-r", "--sort"):
-            sort = a
-    return brand, scoringProfile, gender, typee, sort
 
 def cognitive_search(scoringProfile, brand):
     #searchstring = "&search=*&$count=true&scoringProfile=reviewsPriceLikes&$select=product_name,positive,number_likes,price&$filter=brand eq 'CHANEL'"
     if brand != "":
         searchstring = "&search=*&$count=true&$top=1000&$scoringProfile=" + scoringProfile + "&$filter=brand eq '" + brand +"'"
     else:
-        searchstring = "&search=*&$count=true&$top=10&$scoringProfile=" + scoringProfile
+        searchstring = "&search=*&$count=true&$top=1000&$scoringProfile=" + scoringProfile
     url = endpoint + "indexes/sephora/docs" + api_version + searchstring
     response  = requests.get(url, headers=headers, json=searchstring)
     query = response.json()
+    while "@odata.nextLink" in query:
+        if brand != "":
+            searchstring = "&search=*&$count=true&$top=1000&$skip=1000&$scoringProfile=" + scoringProfile + "&$filter=brand eq '" + brand +"'"
+        else:
+            searchstring = "&search=*&$count=true&$top=1000&$skip=1000&$scoringProfile=" + scoringProfile
+        url = endpoint + "indexes/sephora/docs" + api_version + searchstring
+        response  = requests.get(url, headers=headers, json=searchstring)
+        if "@odata.nextLink" not in response.json():
+            del query["@odata.nextLink"]
+        query['value'] = query['value'] + response.json()['value']
     return query
 
 def sort_by_brand(results, brand):
@@ -63,7 +53,6 @@ def sort_by_family(results):
     men_perfumes = {}
     men_colognes = {}
     women_perfumes = {}
-    women_colognes = {}
     body_sprays = {}
     body_mist = {}
     lotions = {}
@@ -71,30 +60,36 @@ def sort_by_family(results):
     perfume_sets = {}
     men_bath_shower = {}
     women_bath_shower = {}
+    men_deodorant = {}
+    rollerballs = {}
     for product in range(len(results['value'])):
-        if (results['value'][product]['gender'] == "Men" and results['value'][product]['type'] == "Cologne") :
-            men_colognes[results['value'][product]['id']] = results['value'][product]
-        elif (results['value'][product]['gender'] == "Women" and results['value'][product]['type'] == "Perfume") :
+        if (results['value'][product]['gender'] == "Women" and results['value'][product]['type'] == "Perfume") :
             women_perfumes[results['value'][product]['id']] = results['value'][product]
-        elif (results['value'][product]['gender'] == "Women" and results['value'][product]['type'] == "Cologne") :
-            women_colognes[results['value'][product]['id']] = results['value'][product]
+        elif (results['value'][product]['gender'] == "Men" and results['value'][product]['type'] == "Cologne") :
+            men_colognes[results['value'][product]['id']] = results['value'][product]
+        elif (results['value'][product]['gender'] == "Men" and results['value'][product]['type'] == "Perfume") :
+            men_perfumes[results['value'][product]['id']] = results['value'][product]
         elif (results['value'][product]['gender'] == "Men" and results['value'][product]['type'] == "Body Sprays & Deodorant") :
             body_sprays[results['value'][product]['id']] = results['value'][product]
         elif (results['value'][product]['gender'] == "Women" and results['value'][product]['type'] == "Body Mist & Hair Mist") :
             body_mist[results['value'][product]['id']] = results['value'][product]
         elif (results['value'][product]['gender'] == "Women" and results['value'][product]['type'] == "Lotions & Oils") :
             lotions[results['value'][product]['id']] = results['value'][product]
-        elif (results['value'][product]['gender'] == "Gift Sets" and results['value'][product]['type'] == "Cologne Gift Sets") :
+        elif (results['value'][product]['gender'] == "Value & Gift Sets" and results['value'][product]['type'] == "Cologne Gift Sets") :
             cologne_sets[results['value'][product]['id']] = results['value'][product]
-        elif (results['value'][product]['gender'] == "scoringProfile] & Gift Sets" and results['value'][product]['type'] == "Perfume Gift Sets") :
+        elif (results['value'][product]['gender'] == "Value & Gift Sets" and results['value'][product]['type'] == "Perfume Gift Sets") :
             perfume_sets[results['value'][product]['id']] = results['value'][product]
         elif (results['value'][product]['gender'] == "Men" and results['value'][product]['type'] == "Bath & Shower") :
             men_bath_shower[results['value'][product]['id']] = results['value'][product]
         elif (results['value'][product]['gender'] == "Women" and results['value'][product]['type'] == "Bath & Shower") :
             women_bath_shower[results['value'][product]['id']] = results['value'][product]
-    families['men_colognes'] = men_colognes
+        elif (results['value'][product]['gender'] == "Fragrance" and results['value'][product]['type'] == "Deodorant for Men") :
+            men_deodorant[results['value'][product]['id']] = results['value'][product]
+        elif (results['value'][product]['gender'] == "Women" and results['value'][product]['type'] == "Rollerballs & Travel Size") :
+            rollerballs[results['value'][product]['id']] = results['value'][product]
     families['women_perfumes'] = women_perfumes
-    families['women_colognes'] = women_colognes
+    families['men_perfumes'] = men_perfumes
+    families['men_colognes'] = men_colognes
     families['body_sprays'] = body_sprays
     families['body_mist'] = body_mist
     families['lotions'] = lotions
@@ -102,12 +97,14 @@ def sort_by_family(results):
     families['perfume_sets'] = perfume_sets
     families['men_bath_shower'] = men_bath_shower
     families['women_bath_shower'] = women_bath_shower
+    families['men_deodorant'] = men_deodorant
+    families['rollerballs'] = rollerballs
     for family in families.keys():
         if families[family] == {}:
             families.pop(family)
     return families
 
-def mean_by_brand_one_metric(families, metric):
+def mean_by_brand_one_metric___all_families(families, metric):
     families_mean = {}
     for family in families.keys():
         families_mean[family] = {}
@@ -121,13 +118,17 @@ def mean_by_brand_one_metric(families, metric):
         number_products_brand = 0
         for brand in families_mean[family].keys():
             for product in range(len(families_mean[family][brand])):
-                sum_metric += families_mean[family][brand][product][metric]    
-                number_products_brand += 1
+                if families_mean[family][brand][product][metric] != None:
+                    sum_metric += families_mean[family][brand][product][metric]
+                    number_products_brand += 1
             families_mean[family][brand] = {}
-            families_mean[family][brand][metric] = sum_metric / number_products_brand
+            if number_products_brand != 0:
+                families_mean[family][brand][metric] = sum_metric / number_products_brand
+            else:
+                families_mean[family].pop(brand)
     return families_mean
 
-def mean_by_brand_two_metrics(families, metric1, metric2):
+def mean_by_brand_two_metrics___all_families(families, metric1, metric2):
     families_mean = {}
     for family in families.keys():
         families_mean[family] = {}
@@ -142,13 +143,114 @@ def mean_by_brand_two_metrics(families, metric1, metric2):
         number_products_brand = 0
         for brand in families_mean[family].keys():
             for product in range(len(families_mean[family][brand])):
-                sum_metric1 += families_mean[family][brand][product][metric1]
-                sum_metric2 += families_mean[family][brand][product][metric2]
-                number_products_brand += 1
+                if families_mean[family][brand][product][metric1] != None and families_mean[family][brand][product][metric2] != None:
+                    sum_metric1 += families_mean[family][brand][product][metric1]
+                    sum_metric2 += families_mean[family][brand][product][metric2]
+                    number_products_brand += 1
             families_mean[family][brand] = {}
-            families_mean[family][brand][metric1] = sum_metric1 / number_products_brand
-            families_mean[family][brand][metric2] = sum_metric2 / number_products_brand 
+            if number_products_brand != 0:
+                families_mean[family][brand][metric1] = sum_metric1 / number_products_brand
+                families_mean[family][brand][metric2] = sum_metric2 / number_products_brand
+            else:
+                families_mean[family].pop(brand)
     return families_mean
+
+def mean_by_brand_one_metric______on_verra_plus_tard(families, metric):
+    families_mean = {}
+    for family in families.keys():
+        families_mean[family] = {}
+        for product in families[family].keys():
+            brand = families[family][product]['brand']
+            if brand not in families_mean[family]:
+                families_mean[family][brand] = []
+            families_mean[family][brand].append(families[family][product])
+    for family in families_mean.keys():
+        sum_metric = 0
+        number_products_brand = 0
+        for brand in families_mean[family].keys():
+            for product in range(len(families_mean[family][brand])):
+                if families_mean[family][brand][product][metric] != None:
+                    sum_metric += families_mean[family][brand][product][metric]
+                    number_products_brand += 1
+            families_mean[family][brand] = {}
+            if number_products_brand != 0:
+                families_mean[family][brand][metric] = sum_metric / number_products_brand
+            else:
+                families_mean[family].pop(brand)
+    return families_mean
+
+def mean_by_brand_two_metrics___on_verra_plus_tard(families, metric1,metric2):
+    families_mean = {}
+    for family in families.keys():
+        families_mean[family] = {}
+        for product in families[family].keys():
+            brand = families[family][product]['brand']
+            if brand not in families_mean[family]:
+                families_mean[family][brand] = []
+            families_mean[family][brand].append(families[family][product])
+    for family in families_mean.keys():
+        sum_metric1 = 0
+        sum_metric2 = 0
+        number_products_brand = 0
+        for brand in families_mean[family].keys():
+            for product in range(len(families_mean[family][brand])):
+                if families_mean[family][brand][product][metric1] != None and families_mean[family][brand][product][metric2] != None:
+                    sum_metric1 += families_mean[family][brand][product][metric1]
+                    sum_metric2 += families_mean[family][brand][product][metric2]
+                    number_products_brand += 1
+            families_mean[family][brand] = {}
+            if number_products_brand != 0:
+                families_mean[family][brand][metric1] = sum_metric1 / number_products_brand
+                families_mean[family][brand][metric2] = sum_metric2 / number_products_brand
+            else:
+                families_mean[family].pop(brand)
+    return families_mean
+
+def mean_by_brand_one_metric(family, metric):
+    family_mean = {}
+    for product in family.keys():
+        brand = family[product]['brand']
+        if brand not in family_mean:
+            family_mean[brand] = []
+        family_mean[brand].append(family[product])
+    for brand in family_mean.keys():
+        sum_metric = 0
+        number_products_brand = 0
+        for product in range(len(family_mean[brand])):
+            if family_mean[brand][product][metric] != None:
+                sum_metric += family_mean[brand][product][metric]
+                number_products_brand += 1
+        family_mean[brand] = {}
+        if number_products_brand != 0:
+            family_mean[brand][metric] = sum_metric / number_products_brand
+        else:
+            family_mean.pop(brand)
+    return family_mean
+
+
+def mean_by_brand_two_metrics(family, metric1, metric2):
+    family_mean = {}
+    for product in family.keys():
+        brand = family[product]['brand']
+        if brand not in family_mean:
+            family_mean[brand] = []
+        family_mean[brand].append(family[product])
+    for brand in family_mean.keys():
+        sum_metric1 = 0
+        sum_metric2 = 0
+        number_products_brand = 0
+        for product in range(len(family_mean[brand])):
+            if family_mean[brand][product][metric1] != None and family_mean[brand][product][metric2] != None:
+                sum_metric1 += family_mean[brand][product][metric1]
+                sum_metric2 += family_mean[brand][product][metric2]
+                number_products_brand += 1
+        family_mean[brand] = {}
+        if number_products_brand != 0:
+            family_mean[brand][metric1] = sum_metric1 / number_products_brand
+            family_mean[brand][metric2] = sum_metric2 / number_products_brand
+        else:
+            family_mean.pop(brand)
+    return family_mean
 
 def mean_by_family_one_metric(sorted_brand_products, metric):
     families_mean = {}
@@ -157,12 +259,16 @@ def mean_by_family_one_metric(sorted_brand_products, metric):
         sum_metric = 0
         number_products_family = 0
         for product in sorted_brand_products[family]:
-            sum_metric += sorted_brand_products[family][product][metric]
-            number_products_family += 1
+            if sorted_brand_products[family][product][metric] != None:
+                sum_metric += sorted_brand_products[family][product][metric]
+                number_products_family += 1
         if sorted_brand_products[family] == {}:
             families_mean.pop(family)
         else:
-            families_mean[family][metric] = sum_metric / number_products_family
+            if number_products_family != 0:
+                families_mean[family][metric] = sum_metric / number_products_family
+            else:
+                families_mean.pop(family)
     return families_mean
 
 def mean_by_family_two_metrics(sorted_brand_products, metric1, metric2):
@@ -173,41 +279,442 @@ def mean_by_family_two_metrics(sorted_brand_products, metric1, metric2):
         sum_metric2 = 0
         number_products_family = 0
         for product in sorted_brand_products[family]:
-            sum_metric1 += sorted_brand_products[family][product][metric1]
-            sum_metric2 += sorted_brand_products[family][product][metric2]
-            number_products_family += 1
+            if sorted_brand_products[family][product][metric1] != None and sorted_brand_products[family][product][metric2] != None:
+                sum_metric1 += sorted_brand_products[family][product][metric1]
+                sum_metric2 += sorted_brand_products[family][product][metric2]
+                number_products_family += 1
         if sorted_brand_products[family] == {}:
             families_mean.pop(family)
         else:
-            families_mean[family][metric1] = sum_metric1 / number_products_family
-            families_mean[family][metric2] = sum_metric2 / number_products_family
+            if number_products_family != 0:
+                families_mean[family][metric1] = sum_metric1 / number_products_family
+                families_mean[family][metric2] = sum_metric2 / number_products_family
+            else:
+                families_mean.pop(family)
     return families_mean
 
+def format(toFormat):
+    toFormat = str(toFormat)
+    toFormat = toFormat.replace("u'", "'")
+    toFormat = toFormat.replace('u"', '"')
+    toFormat = re.sub("([A-z])'([A-z])", '\\1 \\2', toFormat)
+    # toFormat = re.sub('\\.([0-9]*)', '\\1', toFormat)
+    toFormat = toFormat.replace ('\u', '')
+    toFormat = toFormat.replace("'", '"')
+    toFormat = re.sub('\"([A-Za-z0-9 \\-]*)\"([A-Za-z0-9 \\-]*)\"([A-Za-z0-9 \\-]*)\"', '\"\\1\\2\\3\"', toFormat)
+    toFormat = re.sub('\"([A-Za-z0-9 \\-]*)\"([A-Za-z0-9 \\-]*)\"', '\"\\1\\2\"', toFormat)
+    toFormat = re.sub('\"([A-Za-z0-9 \\-]*)\"([A-Za-z0-9 \\-]*)\,([A-Za-z0-9 \\-]*)\,([A-Za-z0-9 ,\\-]*)\"', '\"\\1\\2,\\3,\\4\"', toFormat)
+    # toFormat = re.sub('\"\\u([A-Za-z0-9 -]*)\"([A-Za-z0-9 \\-]*)\"', '\"\\1\\2\"', toFormat)
+    toFormat = re.sub('0*([1-9])([0-9]*)', '\\1\\2', toFormat)
+    toFormat = ast.literal_eval(toFormat)
+    return toFormat
 
+path = 'json_files'
+if os.path.exists(path) == False:
+    os.mkdir(path)
 
+# scoringProfiles = ["wilsonScore", "reviewsPriceLikes", "reviewsAndLikes"]
+scoringProfiles = ['']
+files_path = []
+files_names = []
+for scoringProfile in scoringProfiles:
+    brand = ''
+    search_results = cognitive_search(scoringProfile, brand)
 
+    # Creation of the files for each family of products
+    sorted_products = format(sort_by_family(search_results))
+    for family in sorted_products:
+        price = mean_by_brand_one_metric(sorted_products[family], 'price')
+        file_name = path + "/" + family + "_price.json"
+        f = open(file_name, "w")
+        f.write(str(price))
+        f.close()
+        popularity = mean_by_brand_one_metric(sorted_products[family], 'wilson_score')
+        file_name = path + "/" + family + "_popularity.json"
+        f = open(file_name, "w")
+        f.write(str(popularity))
+        f.close()
+        files_path.append(file_name)
+        files_names.append(file_name.split('/')[1])
+        mark = mean_by_brand_one_metric(sorted_products[family], 'mark')
+        file_name = path + "/" + family + "_mark.json"
+        f = open(file_name, "w")
+        f.write(str(mark))
+        f.close()
+        files_path.append(file_name)
+        files_names.append(file_name.split('/')[1])
+        number_likes = mean_by_brand_one_metric(sorted_products[family], 'number_likes')
+        file_name = path + "/" + family + "_likes.json"
+        f = open(file_name, "w")
+        f.write(str(number_likes))
+        f.close()
+        files_path.append(file_name)
+        files_names.append(file_name.split('/')[1])
+        positivity = mean_by_brand_one_metric(sorted_products[family], 'positive')
+        file_name = path + "/" + family + "_positivity.json"
+        f = open(file_name, "w")
+        f.write(str(positivity))
+        f.close()
+        files_path.append(file_name)
+        files_names.append(file_name.split('/')[1])
+        likes_and_positivity = mean_by_brand_two_metrics(sorted_products[family], 'number_likes', 'positive')
+        file_name = path + "/" + family + "_likes_and_positivity.json"
+        f = open(file_name, "w")
+        f.write(str(likes_and_positivity))
+        f.close()
+        files_path.append(file_name)
+        files_names.append(file_name.split('/')[1])
+        likes_and_popularity = mean_by_brand_two_metrics(sorted_products[family], 'number_likes', 'wilson_score')
+        file_name = path + "/" + family + "_likes_and_popularity.json"
+        f = open(file_name, "w")
+        f.write(str(likes_and_popularity))
+        f.close()
+        files_path.append(file_name)
+        files_names.append(file_name.split('/')[1])
+        likes_and_mark = mean_by_brand_two_metrics(sorted_products[family], 'number_likes', 'mark')
+        file_name = path + "/" + family + "_likes_and_mark.json"
+        f = open(file_name, "w")
+        f.write(str(likes_and_mark))
+        f.close()
+        files_path.append(file_name)
+        files_names.append(file_name.split('/')[1])
+        likes_and_price = mean_by_brand_two_metrics(sorted_products[family], 'number_likes', 'price')
+        file_name = path + "/" + family + "_likes_and_price.json"
+        f = open(file_name, "w")
+        f.write(str(likes_and_price))
+        f.close()
+        files_path.append(file_name)
+        files_names.append(file_name.split('/')[1])
+        positivity_and_likes = mean_by_brand_two_metrics(sorted_products[family], 'positive', 'number_likes')
+        file_name = path + "/" + family + "_positivity_and_likes.json"
+        f = open(file_name, "w")
+        f.write(str(positivity_and_likes))
+        f.close()
+        files_path.append(file_name)
+        files_names.append(file_name.split('/')[1])
+        positivity_and_popularity = mean_by_brand_two_metrics(sorted_products[family], 'positive', 'wilson_score')
+        file_name = path + "/" + family + "_positivity_and_popularity.json"
+        f = open(file_name, "w")
+        f.write(str(positivity_and_popularity))
+        f.close()
+        files_path.append(file_name)
+        files_names.append(file_name.split('/')[1])
+        positivity_and_price = mean_by_brand_two_metrics(sorted_products[family], 'positive', 'price')
+        file_name = path + "/" + family + "_positivity_and_price.json"
+        f = open(file_name, "w")
+        f.write(str(positivity_and_price))
+        f.close()
+        files_path.append(file_name)
+        files_names.append(file_name.split('/')[1])
+        positivity_and_mark = mean_by_brand_two_metrics(sorted_products[family], 'positive', 'mark')
+        file_name = path + "/" + family + "_positivity_and_mark.json"
+        f = open(file_name, "w")
+        f.write(str(positivity_and_mark))
+        f.close()
+        files_path.append(file_name)
+        files_names.append(file_name.split('/')[1])
+        mark_and_popularity = mean_by_brand_two_metrics(sorted_products[family], 'mark', 'wilson_score')
+        file_name = path + "/" + family + "_mark_and_popularity.json"
+        f = open(file_name, "w")
+        f.write(str(mark_and_popularity))
+        f.close()
+        files_path.append(file_name)
+        files_names.append(file_name.split('/')[1])
+        mark_and_likes = mean_by_brand_two_metrics(sorted_products[family], 'mark', 'number_likes')
+        file_name = path + "/" + family + "_mark_and_likes.json"
+        f = open(file_name, "w")
+        f.write(str(mark_and_likes))
+        f.close()
+        files_path.append(file_name)
+        files_names.append(file_name.split('/')[1])
+        mark_and_positivity = mean_by_brand_two_metrics(sorted_products[family], 'mark', 'positive')
+        file_name = path + "/" + family + "_mark_and_positivity.json"
+        f = open(file_name, "w")
+        f.write(str(mark_and_positivity))
+        f.close()
+        files_path.append(file_name)
+        files_names.append(file_name.split('/')[1])
+        mark_and_price = mean_by_brand_two_metrics(sorted_products[family], 'mark', 'price')
+        file_name = path + "/" + family + "_mark_and_price.json"
+        f = open(file_name, "w")
+        f.write(str(mark_and_price))
+        f.close()
+        files_path.append(file_name)
+        files_names.append(file_name.split('/')[1])
+        price_and_likes = mean_by_brand_two_metrics(sorted_products[family], 'price', 'number_likes')
+        file_name = path + "/" + family + "_price_and_likes.json"
+        f = open(file_name, "w")
+        f.write(str(price_and_likes))
+        f.close()
+        files_path.append(file_name)
+        files_names.append(file_name.split('/')[1])
+        price_and_positivity = mean_by_brand_two_metrics(sorted_products[family], 'price', 'positive')
+        file_name = path + "/" + family + "_price_and_positivity.json"
+        f = open(file_name, "w")
+        f.write(str(price_and_positivity))
+        f.close()
+        files_path.append(file_name)
+        files_names.append(file_name.split('/')[1])
+        price_and_popularity = mean_by_brand_two_metrics(sorted_products[family], 'price', 'wilson_score')
+        file_name = path + "/" + family + "_price_and_popularity.json"
+        f = open(file_name, "w")
+        f.write(str(price_and_popularity))
+        f.close()
+        files_path.append(file_name)
+        files_names.append(file_name.split('/')[1])
+        price_and_mark = mean_by_brand_two_metrics(sorted_products[family], 'price', 'mark')
+        file_name = path + "/" + family + "_price_and_mark.json"
+        f = open(file_name, "w")
+        f.write(str(price_and_mark))
+        f.close()
+        files_path.append(file_name)
+        files_names.append(file_name.split('/')[1])
+        popularity_and_mark = mean_by_brand_two_metrics(sorted_products[family], 'wilson_score', 'mark')
+        file_name = path + "/" + family + "_popularity_and_mark.json"
+        f = open(file_name, "w")
+        f.write(str(popularity_and_mark))
+        f.close()
+        files_path.append(file_name)
+        files_names.append(file_name.split('/')[1])
+        popularity_and_likes = mean_by_brand_two_metrics(sorted_products[family], 'wilson_score', 'number_likes')
+        file_name = path + "/" + family + "_popularity_and_likes.json"
+        f = open(file_name, "w")
+        f.write(str(popularity_and_likes))
+        f.close()
+        files_path.append(file_name)
+        files_names.append(file_name.split('/')[1])
+        popularity_and_price = mean_by_brand_two_metrics(sorted_products[family], 'wilson_score', 'price')
+        file_name = path + "/" + family + "_popularity_and_price.json"
+        f = open(file_name, "w")
+        f.write(str(popularity_and_price))
+        f.close()
+        files_path.append(file_name)
+        files_names.append(file_name.split('/')[1])
+        popularity_and_positivity = mean_by_brand_two_metrics(sorted_products[family], 'wilson_score', 'positive')
+        file_name = path + "/" + family + "_popularity_and_positivity.json"
+        f = open(file_name, "w")
+        f.write(str(popularity_and_positivity))
+        f.close()
+        files_path.append(file_name)
+        files_names.append(file_name.split('/')[1])        
+    print("Family Files done!")
 
+    # Creation of the files for each brand
+    brand_list = []
+    for product in search_results['value']:
+        brand_list.append(product['brand'])
+        brand_list = list(set(brand_list))
+    print("Brand list done!")
 
+    for brand in range(len(brand_list)):
+        if "'" in brand_list[brand]:
+            brand_list[brand] = brand_list[brand].replace("'", "''") #In OData filters, single quotes are escaped by doubling
+        if '&' in brand_list[brand]:
+            brand_list[brand] = brand_list[brand].replace("&", "%26")
 
-# brand, scoringProfile, gender, typee, sort =  fetch_parameters()
-# search_results = cognitive_search(scoringProfile, brand)
+    for brand in brand_list:
+        brand_results = cognitive_search(scoringProfile, brand)
+        sorted_products = sort_by_family(brand_results)
+        prices = mean_by_family_one_metric(sorted_products, 'price')
+        file_name = path + "/" + brand + "_price.json"
+        f = open(file_name, "w")
+        f.write(str(prices))
+        f.close()
+        files_path.append(file_name)
+        popularity = mean_by_family_one_metric(sorted_products, 'wilson_score')
+        file_name = path + "/" + brand + "_popularity.json"
+        f = open(file_name, "w")
+        f.write(str(popularity))
+        f.close()
+        files_path.append(file_name)
+        files_names.append(file_name.split('/')[1])
+        positivity = mean_by_family_one_metric(sorted_products, 'positive')
+        file_name = path + "/" + brand + "_positivity.json"
+        f = open(file_name, "w")
+        f.write(str(positivity))
+        f.close()
+        files_path.append(file_name)
+        files_names.append(file_name.split('/')[1])
+        number_likes = mean_by_family_one_metric(sorted_products, 'number_likes')
+        file_name = path + "/" + brand + "_likes.json"
+        f = open(file_name, "w")
+        f.write(str(number_likes))
+        f.close()
+        files_path.append(file_name)
+        files_names.append(file_name.split('/')[1])
+        marks = mean_by_family_one_metric(sorted_products, 'mark')
+        file_name = path + "/" + brand + "_mark.json"
+        f = open(file_name, "w")
+        f.write(str(marks))
+        f.close()
+        files_path.append(file_name)
+        files_names.append(file_name.split('/')[1])
+        likes_and_positivity = mean_by_family_two_metrics(sorted_products, 'number_likes', 'positive')
+        file_name = path + "/" + brand + "_likes_and_positivity.json"
+        f = open(file_name, "w")
+        f.write(str(likes_and_positivity))
+        f.close()
+        files_path.append(file_name)
+        files_names.append(file_name.split('/')[1])
+        likes_and_popularity = mean_by_family_two_metrics(sorted_products, 'number_likes', 'wilson_score')
+        file_name = path + "/" + brand + "_likes_and_popularity.json"
+        f = open(file_name, "w")
+        f.write(str(likes_and_popularity))
+        f.close()
+        files_path.append(file_name)
+        files_names.append(file_name.split('/')[1])
+        likes_and_price = mean_by_family_two_metrics(sorted_products, 'number_likes', 'price')
+        file_name = path + "/" + brand + "_likes_and_price.json"
+        f = open(file_name, "w")
+        f.write(str(likes_and_price))
+        f.close()
+        files_path.append(file_name)
+        files_names.append(file_name.split('/')[1])
+        likes_and_marks = mean_by_family_two_metrics(sorted_products, 'number_likes', 'mark')
+        file_name = path + "/" + brand + "_likes_and_mark.json"
+        f = open(file_name, "w")
+        f.write(str(likes_and_marks))
+        f.close()
+        files_path.append(file_name)
+        files_names.append(file_name.split('/')[1])
+        positivity_and_likes = mean_by_family_two_metrics(sorted_products, 'positive', 'number_likes')
+        file_name = path + "/" + brand + "_positivity_and_likes.json"
+        f = open(file_name, "w")
+        f.write(str(positivity_and_likes))
+        f.close()
+        files_path.append(file_name)
+        files_names.append(file_name.split('/')[1])
+        positivity_and_price = mean_by_family_two_metrics(sorted_products, 'positive', 'price')
+        file_name = path + "/" + brand + "_positivity_and_price.json"
+        f = open(file_name, "w")
+        f.write(str(positivity_and_price))
+        f.close()
+        files_path.append(file_name)
+        files_names.append(file_name.split('/')[1])
+        positivity_and_popularity = mean_by_family_two_metrics(sorted_products, 'positive', 'wilson_score')
+        file_name = path + "/" + brand + "_positivity_and_popularity.json"
+        f = open(file_name, "w")
+        f.write(str(positivity_and_popularity))
+        f.close()
+        files_path.append(file_name)
+        files_names.append(file_name.split('/')[1])
+        positivity_and_marks = mean_by_family_two_metrics(sorted_products, 'positive', 'mark')
+        file_name = path + "/" + brand + "_positivity_and_mark.json"
+        f = open(file_name, "w")
+        f.write(str(positivity_and_marks))
+        f.close()
+        files_path.append(file_name)
+        files_names.append(file_name.split('/')[1])
+        marks_and_likes = mean_by_family_two_metrics(sorted_products, 'mark', 'number_likes')
+        file_name = path + "/" + brand + "_mark_and_likes.json"
+        f = open(file_name, "w")
+        f.write(str(marks_and_likes))
+        f.close()
+        files_path.append(file_name)
+        files_names.append(file_name.split('/')[1])
+        marks_and_price = mean_by_family_two_metrics(sorted_products, 'mark', 'price')
+        file_name = path + "/" + brand + "_mark_and_price.json"
+        f = open(file_name, "w")
+        f.write(str(marks_and_price))
+        f.close()
+        files_path.append(file_name)
+        files_names.append(file_name.split('/')[1])
+        marks_and_positivity = mean_by_family_two_metrics(sorted_products, 'mark', 'positive')
+        file_name = path + "/" + brand + "_mark_and_positivity.json"
+        f = open(file_name, "w")
+        f.write(str(marks_and_positivity))
+        f.close()
+        files_path.append(file_name)
+        files_names.append(file_name.split('/')[1])
+        marks_and_popularity = mean_by_family_two_metrics(sorted_products, 'mark', 'wilson_score')
+        file_name = path + "/" + brand + "_mark_and_popularity.json"
+        f = open(file_name, "w")
+        f.write(str(marks_and_popularity))
+        f.close()
+        files_path.append(file_name)
+        files_names.append(file_name.split('/')[1])
+        price_and_likes = mean_by_family_two_metrics(sorted_products, 'price', 'number_likes')
+        file_name = path + "/" + brand + "_price_and_likes.json"
+        f = open(file_name, "w")
+        f.write(str(price_and_likes))
+        f.close()
+        files_path.append(file_name)
+        files_names.append(file_name.split('/')[1])
+        price_and_popularity = mean_by_family_two_metrics(sorted_products, 'price', 'wilson_score')
+        file_name = path + "/" + brand + "_price_and_popularity.json"
+        f = open(file_name, "w")
+        f.write(str(price_and_popularity))
+        f.close()
+        files_path.append(file_name)
+        files_names.append(file_name.split('/')[1])
+        price_and_positivity = mean_by_family_two_metrics(sorted_products, 'price', 'positive')
+        file_name = path + "/" + brand + "_price_and_positivity.json"
+        f = open(file_name, "w")
+        f.write(str(price_and_positivity))
+        f.close()
+        files_path.append(file_name)
+        files_names.append(file_name.split('/')[1])
+        price_and_marks = mean_by_family_two_metrics(sorted_products, 'price', 'mark')
+        file_name = path + "/" + brand + "_price_and_mark.json"
+        f = open(file_name, "w")
+        f.write(str(price_and_marks))
+        f.close()
+        files_path.append(file_name)
+        files_names.append(file_name.split('/')[1])
+        popularity_and_likes = mean_by_family_two_metrics(sorted_products, 'wilson_score', 'number_likes')
+        file_name = path + "/" + brand + "_popularity_and_likes.json"
+        f = open(file_name, "w")
+        f.write(str(popularity_and_likes))
+        f.close()
+        files_path.append(file_name)
+        files_names.append(file_name.split('/')[1])
+        popularity_and_price = mean_by_family_two_metrics(sorted_products, 'wilson_score', 'price')
+        file_name = path + "/" + brand + "_popularity_and_price.json"
+        f = open(file_name, "w")
+        f.write(str(popularity_and_price))
+        f.close()
+        files_path.append(file_name)
+        files_names.append(file_name.split('/')[1])
+        popularity_and_positivity = mean_by_family_two_metrics(sorted_products, 'wilson_score', 'positive')
+        file_name = path + "/" + brand + "_popularity_and_positivity.json"
+        f = open(file_name, "w")
+        f.write(str(popularity_and_positivity))
+        f.close()
+        files_path.append(file_name)
+        files_names.append(file_name.split('/')[1])
+        popularity_and_mark = mean_by_family_two_metrics(sorted_products, 'wilson_score', 'mark')
+        file_name = path + "/" + brand + "_popularity_and_mark.json"
+        f = open(file_name, "w")
+        f.write(str(popularity_and_mark))
+        f.close()
+        files_path.append(file_name)
+        files_names.append(file_name.split('/')[1])
+    print("Brand Files done!")
+
+# Upload the files to Azure Storage Files
+uploader = FileService(account_name="puppeteerscrapingresults", account_key="QsaFrqTErlHV6+tnoy1OhfYWMEshAUUnPq/lgY8t/oe6rCHxTuA7IgtlrbQRsSS4Il7olLAR0PQ+NxaIYqfgjw==", connection_string="BlobEndpoint=https://puppeteerscrapingresults.blob.core.windows.net/;QueueEndpoint=https://puppeteerscrapingresults.queue.core.windows.net/;FileEndpoint=https://puppeteerscrapingresults.file.core.windows.net/;TableEndpoint=https://puppeteerscrapingresults.table.core.windows.net/;SharedAccessSignature=sv=2019-10-10&ss=bfqt&srt=sco&sp=rwdlacupx&se=2021-01-01T00:00:00Z&st=2020-05-20T14:13:30Z&sip=109.221.195.239&spr=https&sig=TRkMxEIRXtdz4HqQzpV4q2etl5F7lMC8%2BTM7Ahe7HHI%3D", sas_token="?sv=2019-10-10&ss=bfqt&srt=sco&sp=rwdlacupx&se=2021-01-01T00:00:00Z&st=2020-05-20T14:13:30Z&sip=109.221.195.239&spr=https&sig=TRkMxEIRXtdz4HqQzpV4q2etl5F7lMC8%2BTM7Ahe7HHI%3D", protocol='https', endpoint_suffix='core.windows.net')
+uploader.create_directory("sephora", "json_files", fail_on_exist=False)
+for file in range(len(files_names)):
+    uploader.create_file_from_path("sephora", "json_files", files_names[file], files_path[file])
+    print(files_names[file] + " uploaded!")
+print("Files uploaded!")
 
 # ##########################
 # ## PREMIER CAS D'USAGE  ##
 # ##########################
 # # On choisit un type, et on classe les différentes marques dans ce type de produits
-# if brand == "" : 
+# if brand == "" :
 #     sorted_products = sort_by_family(search_results)
-#     print
 #     brand_price = mean_by_brand_one_metric(sorted_products, 'price')
 #     brand_likes_and_positivity = mean_by_brand_two_metrics(sorted_products, 'number_likes', 'positive')
-
+#     print(brand_price)
 # #########################
 # ## SECOND CAS D'USAGE  ##
 # #########################
-# # On choisit une marque, et on évalue les différentes catégories de cette marque 
-# else: 
+# # On choisit une marque, et on évalue les différentes catégories de cette marque
+# else:
 #     sorted_products = sort_by_family(search_results)
 #     prices = mean_by_family_one_metric(sorted_products, 'price')
 #     likes_and_positivity = mean_by_family_two_metrics(sorted_products, 'number_likes', 'positive')
 #     print(likes_and_positivity)
+
